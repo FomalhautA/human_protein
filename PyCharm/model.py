@@ -103,13 +103,14 @@ def inception(inputs, params):
     zm = tf.nn.conv2d(m, c_m_1_1, strides=[1, 1, 1, 1], padding="SAME")
 
     z = tf.concat(values=[z1, z3, z5_2, zm], axis=3)
+    # bn = tf.layers.batch_normalization(z, axis=-1)
     bn = batch_norm(z, scale, beta)
     a = tf.nn.leaky_relu(bn)
 
     return a
 
 
-def model(X, params, fc1=1000, output=28):
+def forward(X, params, fc1=1000, output=28):
     # Layer 1
     z1 = tf.nn.conv2d(input=X, filter=params["c_L1_7_7"], strides=[1, 2, 2, 1], padding="SAME")
     bn1 = batch_norm(z1, params["c_L1_scale"], params["c_L1_beta"])
@@ -159,7 +160,8 @@ def model(X, params, fc1=1000, output=28):
     ap = tf.nn.avg_pool(a_5b, ksize=[1, 8, 8, 1], strides=[1, 1, 1, 1], padding="VALID")
 
     # Full Connect
-    z_fc = tf.contrib.layers.fully_connected(ap, num_outputs=output, activation_fn=None)
+    z_fc = tf.layers.dense(ap, units=output, activation=None)
+    # bnfc = tf.layers.batch_normalization(z_fc, axis=)
     bnfc = batch_norm(z_fc, params["c_Lout_scale"], params["c_Lout_beta"])
     a_out = tf.nn.sigmoid(bnfc, name="logits")
 
@@ -219,7 +221,7 @@ def calculate_loss(predict, labels, mode='Focal', weighted=False, Wp=None, Wn=No
         raise Exception('Unknown loss Mode.')
 
 
-def loss_Focal(predict, labels, Wp=None, Wn=None, gamma=2):
+def loss_Focal(predict, labels, Wp=None, Wn=None, gamma=2, epsilon=1e-10):
     """
     Calculate Focal loss.
     predict, predict vector.
@@ -232,10 +234,18 @@ def loss_Focal(predict, labels, Wp=None, Wn=None, gamma=2):
     if Wp is None or Wn is None:
         raise Exception('Focal loss need weight vectors!')
 
-    p = tf.negative(tf.multiply(Wp, tf.multiply(labels, tf.multiply(tf.pow((1-predict), gamma), tf.log(predict)))))
-    n = tf.negative(tf.multiply(Wn, tf.multiply((1 - labels), tf.multiply(tf.pow(predict, gamma), tf.log(1 - predict)))))
+    p = tf.negative(tf.multiply(tf.convert_to_tensor(Wp, tf.float32),
+                                tf.multiply(labels,
+                                            tf.multiply(tf.pow((1-predict), gamma),
+                                                        tf.log(predict + epsilon)))))
+    n = tf.negative(tf.multiply(tf.convert_to_tensor(Wn, tf.float32),
+                                tf.multiply((1 - labels),
+                                            tf.multiply(tf.pow(predict, gamma),
+                                                        tf.log(1 - predict + epsilon)))))
 
     loss = tf.add(p, n)
+
+    # print('Loss is : ', loss.eval())
 
     return loss
 

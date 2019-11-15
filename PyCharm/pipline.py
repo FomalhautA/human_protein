@@ -1,4 +1,5 @@
 import time
+import itertools
 
 from util import *
 from model import *
@@ -25,15 +26,124 @@ def norm_params():
     channel_norm_params(f_dict_val.keys(), '../Data/train_s')
 
 
-def my_model_fn()
+def image_input_fn(f_dict, mode, batch_size=128):
+    if mode == estimator.ModeKeys.TRAIN:
+        features, labels = batch_data_generator(f_dict, batch_size, replacement=True)
+
+        features = tf.convert_to_tensor(features, dtype=tf.float32)
+        labels = tf.convert_to_tensor(labels, dtype=tf.float32)
+
+        return features, labels
+
+    elif mode == estimator.ModeKeys.EVAL:
+        features, labels = batch_data_generator(f_dict, batch_size, replacement=False)
+
+        features = tf.convert_to_tensor(features, dtype=tf.float32)
+        labels = tf.convert_to_tensor(labels, dtype=tf.float32)
+
+        return features, labels
+
+    elif mode == estimator.ModeKeys.PREDICT:
+        features = None
+
+        return features
+
+
+# def my_model_fn(features, labels, mode, params, config):
+#
+#     if mode == estimator.ModeKeys.TRAIN:
+#         return estimator.EstimatorSpec(mode,
+#                                        loss=,
+#                                        train_op=)
+#
+#     elif mode == estimator.ModeKeys.EVAL:
+#         return estimator.EstimatorSpec(mode,
+#                                        loss=,
+#                                        eval_metric_ops=)
+#
+#     elif mode == estimator.ModeKeys.PREDICT:
+#         return estimator.EstimatorSpec(mode,
+#                                        predictions=)
+#
+#     else:
+#         raise Exception('Unsupported Mode Name {}'.format(mode))
+
+
+def my_model_fn(features, labels, mode, params):
+    # batch_cn = int(np.ceil(train_scale / batch_scale))
+    # val_step = 2
+
+    conv_params = arch_stone()
+    logits = forward(features, conv_params, fc1=1000, output=28)
+
+    loss = tf.divide(tf.reduce_sum(calculate_loss(tf.squeeze(logits),
+                                                  tf.squeeze(labels),
+                                                  mode='Focal',
+                                                  weighted=True,
+                                                  Wp=params['Wp'],
+                                                  Wn=params['Wn'])),
+                     params['batch_size'])
+
+    predictions = tf.sign(tf.squeeze(logits) - 0.5)
+
+    optimizer = tf.train.RMSPropOptimizer(learning_rate=params['lr'])
+    train_op = optimizer.minimize(loss,
+                                  global_step=tf.train.get_or_create_global_step())
+
+    eval_metric_ops = {'recall': tf.metrics.recall(tf.squeeze(labels), predictions)}
+
+    return estimator.EstimatorSpec(mode,
+                                   predictions=predictions,
+                                   loss=loss,
+                                   train_op=train_op,
+                                   eval_metric_ops=eval_metric_ops)
 
 
 def main_procedure():
-    est = estimator.Estimator(model_fn, model_dir=None, config=None, params=None, warm_start_from=None)
+    f_dict_train, f_dict_val, f_dict_full = load_data(tv_ratio=TV_RATIO, ratio=1.)
+    scale_full = len(f_dict_full.keys())
+    Y_full = fetch_batch_Y(f_dict_full, scale_full)
+    Wp, Wn, Np, Nn = get_weights(Y_full, scale=100)
 
+    # print('Positive Weight: ', Wp)
+    # print('Negative weight: ', Wn)
 
+    batch_size = 64
+    batch_cn = scale_full // batch_size
+    train_step = 10 * batch_cn
+    params = {'lr': 0.001,
+              'batch_size': batch_size,
+              'batch_cn': batch_cn,
+              'train_step': train_step,
+              'Wp': Wp,
+              'Wn': Wn}
 
+    config = estimator.RunConfig(model_dir='./model',
+                                 tf_random_seed=None,
+                                 save_summary_steps=5*batch_cn,
+                                 save_checkpoints_steps=5*batch_cn,
+                                 keep_checkpoint_max=10,
+                                 log_step_count_steps=5*batch_cn)
 
+    model = estimator.Estimator(model_fn=my_model_fn,
+                                model_dir=None,
+                                config=config,
+                                params=params,
+                                warm_start_from=None)
+
+    model.train(input_fn=lambda: image_input_fn(f_dict_train,
+                                                mode=estimator.ModeKeys.TRAIN,
+                                                batch_size=params['batch_size']),
+                steps=params['train_step'])
+    model.evaluate(input_fn=lambda: image_input_fn(f_dict_val,
+                                                   mode=estimator.ModeKeys.EVAL,
+                                                   batch_size=params['batch_size']))
+
+    predictions = list(itertools.islice(model.predict(
+        input_fn=lambda: image_input_fn(f_dict_val,
+                                        mode=estimator.ModeKeys.EVAL,
+                                        batch_size=params['batch_size']))))
+    print('Predictions: ', predictions)
 
 
 def train():
@@ -56,7 +166,7 @@ def train():
     saver_step = 2
 
     conv_params = arch_stone()
-    logits = model(X, conv_params, fc1=1000, output=28)
+    logits = forward(X, conv_params, fc1=1000, output=28)
 
     # loss1 = tf.reduce_sum(tf.nn.sigmoid_cross_entropy_with_logits(logits=logits, labels=Y))
     loss2 = tf.reduce_sum(calculate_loss(tf.squeeze(logits), tf.squeeze(Y), mode='Focal', weighted=True, Wp=Wp, Wn=Wn))
@@ -93,58 +203,58 @@ def train():
     sess.run(tf.local_variables_initializer())
 
     for j in range(train_step):
-        # time_s = time.time()
-        # cost_count = 0
+        time_s = time.time()
+        cost_count = 0
         f_dict_temp = copy.deepcopy(f_dict_train)
         for i in range(batch_cn):
             inputs_batch, labels_batch = batch_data_generator(f_dict_temp, batch_scale)
 
-            # _, cost, y_ = sess.run([train_op, loss2, logits],
-            #                        feed_dict={X: inputs_batch, Y: labels_batch, Wp: W_p, Wn: W_n})
+            _, cost, y_ = sess.run([train_op, loss2, logits],
+                                   feed_dict={X: inputs_batch, Y: labels_batch, Wp: W_p, Wn: W_n})
 
             sess.run([train_op], feed_dict={X: inputs_batch, Y: labels_batch, Wp: W_p, Wn: W_n})
 
-            # y_ = np.squeeze(y_)
-            # y_p = np.array(y_ > 0.5, dtype='int')
-            #
-            # y = labels_batch
-            # rr, pr, acc, f1 = evaluation(y_p, y)
-            #
-            # cost_count += cost
-            # cost_arr.append(cost)
-            #
-            # acc_arr.append(np.average(acc))
-            # rr_arr.append(np.average(rr))
-            # pr_arr.append(np.average(pr))
-            # f1_arr.append(np.average(f1))
+            y_ = np.squeeze(y_)
+            y_p = np.array(y_ > 0.5, dtype='int')
 
-        # if j % val_step == 0:
-        #     f_dict_temp = copy.deepcopy(f_dict_val)
-        #     Y_, label = model_calc(sess, logits, X, f_dict_temp)
-        #     rr, pr, acc, f1 = evaluation(Y_, label)
-        #
-        #     accv.append(np.average(acc))
-        #     rrv.append(np.average(rr))
-        #     prv.append(np.average(pr))
-        #     f1v.append(np.average(f1))
-        #
-        # if j % saver_step == saver_step-1:
-        #     meta_flag = True if j == saver_step-1 else False
-        #     saver.save(sess, "./model/inception_v3_"+str(j+1)+".ckpt", write_meta_graph=meta_flag)
-        #
-        # if j == 0:
-        #     saver.save(sess, "./model/inception_v3_" + str(j + 1) + ".ckpt", write_meta_graph=True)
-        #
-        # time_cost = (time.time()-time_s)/60
-        # print("Step {}: {} Time Cost: {} min".format(j, round(cost_count / train_scale * 100, 4), round(time_cost, 1)))
+            y = labels_batch
+            rr, pr, acc, f1 = evaluation(y_p, y)
 
-    # # train performance
-    # plot_performance(train_step, cost_arr, acc_arr, rr_arr, pr_arr, f1_arr, batch_cnt=batch_cn,
-    #                  save_name="./performance/train_performance.jpg")
-    #
-    # # validation performance
-    # plot_performance(train_step, cost=None, acc=accv, rr=rrv, pr=prv, f1=f1v, step=val_step, batch_cnt=1,
-    #                  save_name="./performance/validation_performance.jpg")
+            cost_count += cost
+            cost_arr.append(cost)
+
+            acc_arr.append(np.average(acc))
+            rr_arr.append(np.average(rr))
+            pr_arr.append(np.average(pr))
+            f1_arr.append(np.average(f1))
+
+        if j % val_step == 0:
+            f_dict_temp = copy.deepcopy(f_dict_val)
+            Y_, label = model_calc(sess, logits, X, f_dict_temp)
+            rr, pr, acc, f1 = evaluation(Y_, label)
+
+            accv.append(np.average(acc))
+            rrv.append(np.average(rr))
+            prv.append(np.average(pr))
+            f1v.append(np.average(f1))
+
+        if j % saver_step == saver_step-1:
+            meta_flag = True if j == saver_step-1 else False
+            saver.save(sess, "./model/inception_v3_"+str(j+1)+".ckpt", write_meta_graph=meta_flag)
+
+        if j == 0:
+            saver.save(sess, "./model/inception_v3_" + str(j + 1) + ".ckpt", write_meta_graph=True)
+
+        time_cost = (time.time()-time_s)/60
+        print("Step {}: {} Time Cost: {} min".format(j, round(cost_count / train_scale * 100, 4), round(time_cost, 1)))
+
+    # train performance
+    plot_performance(train_step, cost_arr, acc_arr, rr_arr, pr_arr, f1_arr, batch_cnt=batch_cn,
+                     save_name="./performance/train_performance.jpg")
+
+    # validation performance
+    plot_performance(train_step, cost=None, acc=accv, rr=rrv, pr=prv, f1=f1v, step=val_step, batch_cnt=1,
+                     save_name="./performance/validation_performance.jpg")
 
     # evaluation model performance in train set
     f_dict_temp = copy.deepcopy(f_dict_train)
@@ -269,6 +379,7 @@ def _test():
 
 if __name__ == '__main__':
     # _test()
-    train()
+    # train()
     # _predict("./model_9_96_70/inception_v3_1.ckpt.meta", "./model_9_96_70/inception_v3_40.ckpt")
 
+    main_procedure()

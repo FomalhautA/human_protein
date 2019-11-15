@@ -372,17 +372,19 @@ def load_data(tv_ratio=0.1, ratio=0.002):
     return f_dict_train, f_dict_val, f_dict_full
 
 
-def batch_data_generator(f_dict, batch_size):
+def batch_data_generator(f_dict, batch_size, replacement=False):
     """
 
     :param f_dict:
     :param batch_size:
+    :param replacement:
     :return:
     """
-    scale = len(f_dict.keys()) if len(f_dict.keys()) < batch_size else batch_size
+    scale = min(len(f_dict.keys()), batch_size)
 
     batch_dict = rand_sample(f_dict, scale)
-    f_dict = dict_substract(f_dict, batch_dict)
+    if not replacement:
+        f_dict = dict_substract(f_dict, batch_dict)
 
     X_train, Y_train = fetch_batch_data(batch_dict, scale, 0, "../Data/train_s")
 
