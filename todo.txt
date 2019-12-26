@@ -1,8 +1,15 @@
-1. conv2d to conv3d
-2. tf.nn to tf.layers
-3. predict input_fn realization
-4. Batch Norm to tf.layers.Batchnorm
-5. InceptionV4 Model Modification
-6. Weight for channel
-7. channel from 4 to 12
+1. statistic of pr, rr and f1 and average, std for different channels between different classes
+2. try to figure out whether we should did data augumentation and how to do data augu properly.
+
+3. channel from 4 to 12
+
+4. InceptionV4 Model Modification
+5. Weight for channel
+
+6. data normalization method
+
+7. dropout
+8. optimizer
+
+9. Label smoothing?
 

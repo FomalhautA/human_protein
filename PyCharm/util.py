@@ -1,18 +1,19 @@
-
-
 import numpy as np
 import pandas as pd
 
+import csv
 import os
 import copy
 
-import csv
 import random
-import tensorflow as tf
-import matplotlib.pylab as plt
 from PIL import Image
 
-from pipline import LR_DECAY, ORIG_CHANNEL, NORM_AVG, NORM_STD
+from pipline import ORIG_CHANNEL
+
+NORM_AVG_GL = [20.58, 13.46, 14., 21.12]
+NORM_STD_GL = [35.06, 25.9, 39.23, 35.32]
+NORM_AVG_TEST = [15.12, 11.6, 10.4, 15.13]
+NORM_STD_TEST = [30.07, 24.21, 33.08, 29.5]
 
 
 def mat_to_dict(ids, f_mat):
@@ -26,67 +27,12 @@ def mat_to_dict(ids, f_mat):
     return res
 
 
-def get_name_set(filelist):
-    """
-    Fetch common name from file names in file name list.
-    Common name does not contain color.
-
-    filelist, list of file names.
-
-    Return a set of common name.
-    """
-    color = ["green", "blue", "red", "yellow"]
-    name_set = set()
-    for filename in filelist:
-        name = filename.split("_")[0]
-        name_set.add(name)
-
-    return name_set
-
-
-# def get_image_tensor(idx, fname_lst):
-#     """
-#     Get image tensor with index "idx" from file name list "fname_lst".
-#     idx, index of image
-#     fname_lst, list of file names
-#     """
-#     fname = file_name_green[idx]
-#     full_name = os.path.join(folder, fname)
-#
-#     image_data = tf.gfile.FastGFile(full_name, 'rb').read()
-#     image_tensor = tf.image.decode_png(image_data, channels=3)
-#
-#     return image_tensor
-
-
-# def get_image_tensors(fname_lst):
-#     """
-#     Get full dimension image tensor in given filename list.
-#     fname_lst, list of file names.
-#
-#     Return image tensors.
-#     """
-#     image_tensors = tf.convert_to_tensor([get_image_tensor(idx)
-#                                           for idx in range(len(fname_lst))], tf.float32)
-#     print("image arr shape: ", image_tensors.get_shape())
-#
-#     return image_tensors
-
-
-def normalizer(mat):
+def normalizer(mat, norm_avg, norm_std):
+    mat = mat.astype(float)
     for i in range(ORIG_CHANNEL):
-        mat[:, i, :, :] = (mat[:, i, :, :] - NORM_AVG[i]) / NORM_STD[i]
+        mat[i] = (mat[i] - norm_avg[i]) / norm_std[i]
 
-
-def matrix_reshape(mat):
-    temp = np.zeros((mat.shape[0], mat.shape[2], mat.shape[3], mat.shape[1]))
-    for r in range(mat.shape[0]):
-        for i in range(mat.shape[2]):
-            for j in range(mat.shape[3]):
-                for k in range(mat.shape[1]):
-                    temp[r][i][j][k] = mat[r][k][i][j]
-
-    return temp
+    return mat
 
 
 def channel_norm_params(namelst, folder):
@@ -104,8 +50,8 @@ def channel_norm_params(namelst, folder):
     for i, name in enumerate(namelst):
         image_arr = get_image_arr([name], folder)[0]
         for j in range(ORIG_CHANNEL):
-            std_tmp = np.std(image_arr[j])
-            std_lst[j] = inc_std(std_lst[j], i+1, avg_lst[j], std_tmp)
+            std_tmp = np.sqrt(np.mean((image_arr[j]-avg_lst[j])**2))
+            std_lst[j] = inc_std(std_lst[j], i+1, std_tmp)
     print([round(item, 2) for item in std_lst])
 
     return avg_lst, std_lst
@@ -119,10 +65,10 @@ def inc_avg(avg, N, x):
         raise Exception('N must be zero or positive integer.')
 
 
-def inc_std(std, N, avg, x):
+def inc_std(std, N, x):
 
     if N >= 1:
-        return (std**2*(N-1)/N + (x-avg)**2/N)**0.5
+        return (std**2*(N-1)/N + x**2/N)**0.5
     else:
         raise Exception('N must be zero or positive integer.')
 
@@ -136,14 +82,18 @@ def get_image_arr(fname_lst, folder):
     """
     img_arr = []
     for fname in fname_lst:
-        temp = []
-        for channel in ['red', 'green', 'blue', 'yellow']:
-            im = Image.open(os.path.join(folder, fname+'_'+channel+'.png'), 'r')
-            temp.append(np.array(im.convert('L')))
-
-        img_arr.append(np.array(temp))
+        img_arr.append(get_image(fname, folder))
 
     return np.array(img_arr)
+
+
+def get_image(fname, folder):
+    temp = []
+    for channel in ['red', 'green', 'blue', 'yellow']:
+        im = Image.open(os.path.join(folder, fname + '_' + channel + '.png'), 'r')
+        temp.append(np.array(im.convert('L')))
+
+    return np.array(temp)
 
 
 def rand_sample(f_dict, scale):
@@ -152,7 +102,8 @@ def rand_sample(f_dict, scale):
     Scale is sample numbers you want.
     """
     subset = dict()
-    keys = random.sample(f_dict.keys(), scale)
+
+    keys = random.sample(list(f_dict.keys()), scale)
     for item in keys:
         subset[item] = f_dict[item]
 
@@ -178,41 +129,12 @@ def pick_labels(f_dict, fname_lst):
     return np.array(res)
 
 
-def fetch_batch_X(f_dict, scale, idx, folder):
-    pick_list = list(f_dict.keys())
-
-    fname_batch_ = pick_list[idx * scale: (idx + 1) * scale]
-    # fname_green_batch_ = [item + "_green.png" for item in fname_batch_]
-
-    image_arr = get_image_arr(fname_batch_, folder)
-
-    return image_arr
+def fetch_data_x(fname, folder, norm_avg, norm_std):
+    return np.transpose(normalizer(get_image(fname, folder), norm_avg=norm_avg, norm_std=norm_std), (1, 2, 0))
 
 
-def fetch_batch_Y(f_dict, scale, idx=0):
-    pick_list = list(f_dict.keys())
-
-    fname_batch_ = pick_list[idx * scale: (idx + 1) * scale]
-    # fname_green_batch_ = [item + "_green.png" for item in fname_batch_]
-
-    labels_batch_ = pick_labels(f_dict, fname_batch_)
-    labels = labels_batch_
-    labels = labels.reshape((-1, 1, 1, 28))
-
-    return labels
-
-
-def fetch_batch_data(f_dict, scale, idx, folder):
-    """
-    f_dict, filename dictionary
-    scale, batch size
-    idx, batch number
-
-    """
-    X = fetch_batch_X(f_dict, scale, idx, folder)
-    Y = fetch_batch_Y(f_dict, scale, idx)
-
-    return X, Y
+def fetch_data_y(dataframe, fname):
+    return np.array(dataframe[fname]).reshape((1, 1, 28))
 
 
 def get_weights(labels, scale=10, delta=1, threshold=0.004):
@@ -232,15 +154,13 @@ def get_weights(labels, scale=10, delta=1, threshold=0.004):
 
     N_n = N - N_p
 
-    W_p = scale / N_p
-
-    W_n = scale / N_n
+    W_p = N_n / N
 
     # W_p = np.array([item if item < threshold else threshold for item in W_p])
     #
     # W_n = np.array([item if item < threshold else threshold for item in W_n])
     #
-    return W_p.reshape(1, -1), W_n.reshape(1, -1), N_p, N_n
+    return W_p, 1 - W_p, N_p, N_n
 
 
 def showWeights(W_p, W_n, N_p, N_n):
@@ -251,62 +171,6 @@ def showWeights(W_p, W_n, N_p, N_n):
     print([round(item, 6) for item in W_n[0]])
     print([int(item) for item in N_p])
     print([int(item) for item in N_n])
-
-
-def plot_performance(epochs, cost=None, acc=None, rr=None, pr=None, f1=None,
-                     step=1, batch_cnt=10, save_name="result.png"):
-    """
-    Visulizing performance index evolving during trainnig.
-    epochs, trainning epochs
-    cost, 1-d array for loss
-    acc, 1-d array for accuracy
-    rr, 1-d array for recall rate
-    pr, 1-d array for precise rate
-    f1, 1-d array for f1 score
-    """
-    count = epochs // step * batch_cnt
-    x = np.linspace(1, epochs, count)
-
-    fig = plt.figure(figsize=(15, 8))
-    if cost:
-        plt.subplot(2, 3, 1)
-        plt.plot(x, cost)
-        plt.title("Total Weighted Loss")
-
-    if acc:
-        plt.subplot(2, 3, 2)
-        plt.plot(x, acc)
-        plt.ylim([0, 1])
-        plt.title("Averaged Accuracy")
-
-    if rr:
-        plt.subplot(2, 3, 3)
-        plt.plot(x, rr)
-        plt.ylim([0, 1])
-        plt.title('Averaged Recall Rate')
-
-    if pr:
-        plt.subplot(2, 3, 4)
-        plt.plot(x, pr)
-        plt.ylim([0, 1])
-        plt.title('Averaged Precision Rate')
-
-    if f1:
-        plt.subplot(2, 3, 5)
-        plt.plot(x, f1)
-        plt.ylim([0, 1])
-        plt.title('Averaged F1-Score')
-
-    fig.savefig(save_name)
-
-    # plt.show()
-
-
-def my_decay(a, b):
-    """
-    Exponential decay function with decay_rate, decay_steps.
-    """
-    return tf.train.exponential_decay(a, b, decay_steps=2, decay_rate=LR_DECAY, staircase=True)
 
 
 def label_encode(target, cnumber=28):
@@ -328,7 +192,7 @@ def label_encode(target, cnumber=28):
 
 def convert_res_str(hotcode):
     if len(hotcode) == 0:
-        return ""
+        return "0"
     res = ""
     for item in hotcode:
         res += str(item)
@@ -341,10 +205,16 @@ def dict_substract(dict1, dict2):
     for key in dict2.keys():
         del dict1[key]
 
-    return dict1
+
+def load_test_fname(folder):
+    test_f_lst = os.listdir(folder)
+    test_f_set = set([item.split("_")[0] for item in test_f_lst])
+    test_flst = list(test_f_set)
+
+    return test_flst
 
 
-def load_data(tv_ratio=0.1, ratio=0.002):
+def data_partition(tv_ratio=0.1, ratio=0.002):
     """
 
     :param tv_ratio: train validation ratio
@@ -367,81 +237,81 @@ def load_data(tv_ratio=0.1, ratio=0.002):
     f_dict = rand_sample(f_dict, picked)
     f_dict_full = copy.deepcopy(f_dict)
     f_dict_val = rand_sample(f_dict, int(picked*tv_ratio))
-    f_dict_train = dict_substract(f_dict, f_dict_val)
+    dict_substract(f_dict, f_dict_val)
+    f_dict_train = f_dict
+
+    df_val = pd.DataFrame()
+    for key in f_dict_val.keys():
+        df_val[key] = f_dict_val[key]
+
+    df_val.to_csv('../Data/val.csv', index=False)
+
+    df_train = pd.DataFrame()
+    for key in f_dict_train.keys():
+        df_train[key] = f_dict_train[key]
+
+    df_train.to_csv('../Data/tra.csv', index=False)
+
+    df_full = pd.DataFrame()
+    for key in f_dict_full.keys():
+        df_full[key] = f_dict_full[key]
+
+    df_full.to_csv('../Data/full.csv', index=False)
+
+    # return len(f_dict_train.keys()), len(f_dict_val.keys()), len(f_dict_full.keys())
+    return f_dict_train, f_dict_val, f_dict_full
+
+
+def load_data():
+    f_dict_train = pd.read_csv('../Data/tra.csv')
+    f_dict_val = pd.read_csv('../Data/val.csv')
+    f_dict_full = pd.read_csv('../Data/full.csv')
 
     return f_dict_train, f_dict_val, f_dict_full
 
 
-def batch_data_generator(f_dict, batch_size, replacement=False):
-    """
-
-    :param f_dict:
-    :param batch_size:
-    :param replacement:
-    :return:
-    """
-    scale = min(len(f_dict.keys()), batch_size)
-
-    batch_dict = rand_sample(f_dict, scale)
-    if not replacement:
-        f_dict = dict_substract(f_dict, batch_dict)
-
-    X_train, Y_train = fetch_batch_data(batch_dict, scale, 0, "../Data/train_s")
-
-    normalizer(X_train)
-    X_train = matrix_reshape(X_train)
-
-    return X_train, Y_train
+def train_data_generator(f_dict, folder):
+    while True:
+        f_dict = rand_sample(f_dict, len(f_dict.keys()))
+        for key in f_dict.keys():
+                yield fetch_data_x(key, folder, NORM_AVG_GL, NORM_STD_GL), fetch_data_y(f_dict, key)
 
 
-# def predict(sess, logits, X, test_flst_n):
-#     resfile = open("./Data/result.csv", "w", newline="")
-#     res_writer = csv.writer(resfile)
-#     res_writer.writerow(["Id", "Predicted"])
-#     for fname in test_flst_n:
-#         image_arr = get_image_arr([fname+"_green.png"], "./Data/test_s")
-#
-#         y_test_ = sess.run(logits, feed_dict={X: image_arr})
-#         y_test_ = list(np.squeeze(y_test_))
-#
-#         temp = []
-#         for i, item in enumerate(y_test_):
-#             if item > 0.5:
-#                 temp.append(i)
-#
-#         predict = convert_res_str(temp)
-#
-#         res_writer.writerow([fname, predict])
-#
-#     resfile.close()
+def eval_data_generator(f_dict, folder):
+    while True:
+        for key in f_dict.keys():
+            yield fetch_data_x(key, folder, NORM_AVG_GL, NORM_STD_GL), fetch_data_y(f_dict, key)
 
 
-def model_calc(sess, logits, X, f_dict):
-    calc_batch = 64
-    inner_loop = len(f_dict.keys()) // calc_batch
+def pred_data_generator(test_flst, folder):
+    for key in test_flst:
+        yield fetch_data_x(key, folder, NORM_AVG_TEST, NORM_STD_TEST)
 
-    y_p = []
-    labels = []
-    for i in range(inner_loop):
-        X_data, Y_data = batch_data_generator(f_dict, calc_batch)
-        y_ = sess.run(logits, feed_dict={X: X_data})
-        y_ = np.squeeze(y_)
-        y_p.append(np.array(y_ > 0.5, dtype='int'))
-        labels.append(Y_data)
 
-    if inner_loop * calc_batch < len(f_dict.keys()):
-        X_data, Y_data = batch_data_generator(f_dict, calc_batch)
-        y_ = sess.run(logits, feed_dict={X: X_data})
-        y_ = np.squeeze(y_)
-        y_p.append(np.array(y_ > 0.5, dtype='int'))
-        labels.append(Y_data)
+def convert_y(y_):
+    temp = []
+    for i, item in enumerate(y_):
+        if item > 0.5:
+            temp.append(i)
 
-    Y_ = y_p[0]
-    for i in range(1, len(y_p)):
-        Y_ = np.vstack([Y_, y_p[i]])
+    predict = convert_res_str(temp)
 
-    Y = labels[0]
-    for i in range(1, len(labels)):
-        Y = np.vstack([Y, labels[i]])
+    return predict
 
-    return Y_, Y
+
+def save_to_file(fnames, predictions):
+    resfile = open("./performance/result.csv", "w", newline="")
+    res_writer = csv.writer(resfile)
+    res_writer.writerow(["Id", "Predicted"])
+    ans = dict()
+    for fname, pred in zip(fnames, predictions):
+        ans[fname] = convert_y(pred)
+
+    for key in sorted(ans.keys()):
+        res_writer.writerow([key, ans[key]])
+
+    resfile.close()
+
+
+def f1_score(rr, pr):
+    return 2*rr*pr/(rr+pr)
