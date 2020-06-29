@@ -29,6 +29,9 @@ def arch_stone():
     conv_params["c_L5a"] = inception_init(out1=256, r3=160, out3=320, r5=32, out5=128, outm=128)
     conv_params["c_L5b"] = inception_init(out1=384, r3=192, out3=384, r5=48, out5=128, outm=128)
 
+    conv_params['c_L6a'] = inception_init(out1=384, r3=192, out3=384, r5=48, out5=128, outm=128)
+    conv_params['c_L6b'] = inception_init(out1=512, r3=256, out3=512, r5=64, out5=128, outm=128)
+
     return conv_params
 
 
@@ -121,6 +124,14 @@ def forward(X, params, mode, fc1=1000, output=28):
     a_5a = inception_v2(m4, params["c_L5a"], training=training)
     # Layer 5b
     a_5b = inception_v2(a_5a, params["c_L5b"], training=training)
+
+    # # Max Pool
+    # m5 = tf.layers.max_pooling2d(inputs=a_5b, pool_size=(3, 3), strides=(2, 2), padding='same')
+    #
+    # # Layer 6a
+    # a_6a = inception_v2(m5, params['c_L6a'], training=training)
+    # # Layer 6b
+    # a_6b = inception_v2(a_6a, params['c_L6b'], training=training)
 
     # Avg Pool
     ap = tf.layers.average_pooling2d(inputs=a_5b, pool_size=(8, 8), strides=(1, 1), padding='valid')

@@ -12,11 +12,18 @@ WN = np.array([0.4147, 0.0404, 0.1165, 0.0502, 0.0598, 0.0809, 0.0324, 0.0908, 0
                0.0173, 0.0343, 0.0007, 0.0171, 0.0068, 0.029, 0.0477, 0.0055, 0.1216, 0.0258, 0.0954, 0.0104, 0.2648,
                0.0106, 0.0004])
 
+# WP = np.array([0.6174, 0.9644, 0.8852, 0.9623, 0.9524, 0.9148, 0.9641, 0.9373, 0.966, 0.9629, 0.9633, 0.9639, 0.9653,
+#                0.9629, 0.964, 0.9621, 0.9591, 0.9647, 0.9658, 0.9619, 0.965, 0.9, 0.9658, 0.9252, 0.9668, 0.7894,
+#                0.9645, 0.9591])
+# WN = np.array([0.3826, 0.0356, 0.1148, 0.0377, 0.0476, 0.0852, 0.0359, 0.0627, 0.034, 0.0371, 0.0367, 0.0361, 0.0347,
+#                0.0371, 0.036, 0.0379, 0.0409, 0.0353, 0.0342, 0.0381, 0.035, 0.1, 0.0342, 0.0748, 0.0332, 0.2106,
+#                0.0355, 0.0409])
+
 ORIG_CHANNEL = 4
 
 
-def norm_params():
-    f_dict_train, f_dict_val, f_dict_full = load_data()
+def norm_params(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full.csv'):
+    f_dict_train, f_dict_val, f_dict_full = load_data(train=train, val=val, full=full)
     print("Full Set: ")
     channel_norm_params(f_dict_full.keys(), '../Data/train_s')
     print("Train Set: ")
@@ -36,10 +43,10 @@ def train_input_fn(data_getter, batch_size):
                                              output_shapes=(tf.TensorShape([None, None, 4]), tf.TensorShape([None, None, 28])),
                                              args=None)
 
-    dataset = dataset.shuffle(buffer_size=10*batch_size)
+    dataset = dataset.shuffle(buffer_size=8*batch_size)
     dataset = dataset.batch(batch_size=batch_size, drop_remainder=False)
     dataset = dataset.repeat(count=None)
-    dataset = dataset.prefetch(buffer_size=1)
+    dataset = dataset.prefetch(buffer_size=4)
 
     return dataset.make_one_shot_iterator().get_next()
 
@@ -104,16 +111,19 @@ def model_fn(features, labels, mode, params):
             raise Exception('Unsupported Mode Name {}'.format(mode))
 
 
-def main_procedure():
-    f_dict_train, f_dict_val, f_dict_full = load_data()
+def main_procedure(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None):
+    f_dict_train = df_to_dict(pd.read_csv(train))
+    f_dict_val = df_to_dict(pd.read_csv(val))
+    f_dict_full = df_to_dict(pd.read_csv(full))
     test_fname = load_test_fname('../Data/test_s')
+
     scale_full = len(f_dict_full.keys())
     scale_train = len(f_dict_train.keys())
     scale_eval = len(f_dict_val.keys())
     print("full: {}, train: {}, eval: {}".format(scale_full, scale_train, scale_eval))
 
-    epochs = 200
-    train_batch_size = 32
+    epochs = 680
+    train_batch_size = 8
     batch_cn_train = scale_train // train_batch_size + 1
     train_step = epochs * batch_cn_train
     eval_batch_size = 64
@@ -126,7 +136,7 @@ def main_procedure():
 
     model_dir = './model'
 
-    params = {'lr': 0.01,
+    params = {'lr': 0.02,
               'Wp': WP.astype(np.float32),
               'Wn': WN.astype(np.float32)}
 
@@ -154,10 +164,7 @@ def main_procedure():
                                       throttle_secs=0)
 
     x = tf.estimator.train_and_evaluate(model, train_spec, eval_spec)
-
     print(x)
-
-
 
     # model.train(input_fn=lambda: train_input_fn(train_data_gen, batch_size=train_batch_size),
     #             steps=train_step)
@@ -166,18 +173,22 @@ def main_procedure():
     #                                                   batch_size=eval_batch_size),
     #                    steps=eval_step,
     #                    checkpoint_path='./model/model.ckpt-87400')
-    #`
+    #
     # print(x)
 
+    # checkpoint_path = './model/model.ckpt-' + ckpt if ckpt else None
+    #
     # predictions = model.predict(input_fn=lambda: pred_input_fn(pred_data_gen,
     #                                                            batch_size=pred_batch_size),
-    #                             checkpoint_path='./model/model.ckpt-87400')
+    #                             checkpoint_path=checkpoint_path)
     #
-    # save_to_file(test_fname, predictions)
+    # save_to_file(test_fname, predictions, decode=True, ckpt=ckpt)
+    # save_to_file(f_dict_val.keys(), predictions, decode=False)
 
 
 if __name__ == '__main__':
-    # data_partition(tv_ratio=0.1, ratio=1)
-    # norm_params()
-    main_procedure()
-
+    # data_partition(tv_ratio=0.2, ratio=1)
+    # norm_params(train='../Data/tra_aug.csv', val='../Data/val_aug.csv', full='../Data/full_aug.csv')
+    # for ckpt in ['528770', '1009470', '1490170', '1970870', '2451570']:
+    #     main_procedure(train='../Data/tra_aug.csv', val='../Data/val_aug.csv', full='../Data/full_aug.csv', ckpt=ckpt)
+    main_procedure(train='../Data/tra_aug.csv', val='../Data/val_aug.csv', full='../Data/full_aug.csv', ckpt=None)

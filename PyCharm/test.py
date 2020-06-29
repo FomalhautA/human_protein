@@ -1,5 +1,5 @@
 import tensorflow as tf
-from util import f1_score
+from util import f1_score, get_image
 
 
 def stats_graph(graph):
@@ -9,10 +9,29 @@ def stats_graph(graph):
     print('FLOPs: {};  Trainable params: {}'.format(flops.total_float_ops, params.total_parameters))
 
 
+def calc_f1score():
+    prs = [0.529, 0.5892]
+    rrs = [0.6609, 0.6548]
+    idx = [200, 800]
+
+    for (i, pr, rr) in zip(idx, prs, rrs):
+        print(i, pr, rr, round(f1_score(pr, rr), 4))
+
+
+def stat_model():
+    with tf.Session() as sess:
+        saver = tf.train.import_meta_graph('./model/model.ckpt-0.meta')
+        saver.restore(sess, './model/model.ckpt-0')
+
+        graph = tf.get_default_graph()
+
+        stats_graph(graph)
+
+
 def _test():
-    # a = get_image_arr(['00a79920-bad1-11e8-b2b8-ac1f6b6435d0', '00ad3e84-bad1-11e8-b2b8-ac1f6b6435d0'], '../Data/test_s')
-    # b = a[1][3]*255
-    # print(b.shape)
+    a = get_image('000a6c98-bb9b-11e8-b2b9-ac1f6b6435d0', '../Data/train')
+    b = a
+    print(b.shape)
     # b.astype('uint8')
     # img = Image.fromarray(b)
     # img.show()
@@ -35,13 +54,6 @@ def _test():
     # print('Positive Weight: ', [round(item, 4) for item in Wp.tolist()])
     # print('Negative weight: ', [round(item, 4) for item in Wn.tolist()])
 
-    # prs = [0.4123, 0.4198]
-    # rrs = [0.7133, 0.7206]
-    # idx = [100]
-    #
-    # for (i, pr, rr) in zip(idx, prs, rrs):
-    #     print(i, pr, rr, round(f1_score(pr, rr), 4))
-
     # features, labels = input_fn(mode=tf.estimator.ModeKeys.TRAIN, batch_size=2)
     #
     # with tf.Session() as sess:
@@ -53,15 +65,7 @@ def _test():
     #     print(x.shape)
     #     print(y.shape)
 
-    with tf.Session() as sess:
-        saver = tf.train.import_meta_graph('./model/model.ckpt-0.meta')
-        saver.restore(sess, './model/model.ckpt-0')
-
-        
-
-        graph = tf.get_default_graph()
-
-        stats_graph(graph)
+    # calc_f1score()
 
 
 if __name__ == '__main__':

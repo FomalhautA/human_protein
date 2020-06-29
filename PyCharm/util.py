@@ -10,10 +10,15 @@ from PIL import Image
 
 from pipline import ORIG_CHANNEL
 
-NORM_AVG_GL = [20.58, 13.46, 14., 21.12]
-NORM_STD_GL = [35.06, 25.9, 39.23, 35.32]
+# NORM_AVG_GL = [20.58, 13.46, 14., 21.12]
+# NORM_STD_GL = [35.06, 25.9, 39.23, 35.32]
+
+NORM_AVG_GL = [21.35, 12.74, 14.38, 21.65]
+NORM_STD_GL = [35.5, 24.61, 39.67, 35.76]
 NORM_AVG_TEST = [15.12, 11.6, 10.4, 15.13]
 NORM_STD_TEST = [30.07, 24.21, 33.08, 29.5]
+
+COLORS = ['red', 'green', 'blue', 'yellow']
 
 
 def mat_to_dict(ids, f_mat):
@@ -87,10 +92,15 @@ def get_image_arr(fname_lst, folder):
     return np.array(img_arr)
 
 
-def get_image(fname, folder):
+def get_image(fname, folder, aug=True):
+
+    temp_name = fname
+    if not aug:
+        temp_name = fname.split('-aug')[0] if fname.__contains__('-aug') else fname
+
     temp = []
-    for channel in ['red', 'green', 'blue', 'yellow']:
-        im = Image.open(os.path.join(folder, fname + '_' + channel + '.png'), 'r')
+    for channel in COLORS:
+        im = Image.open(os.path.join(folder, temp_name + '_' + channel + '.png'), 'r')
         temp.append(np.array(im.convert('L')))
 
     return np.array(temp)
@@ -167,8 +177,8 @@ def showWeights(W_p, W_n, N_p, N_n):
     """
     Show weighted weights W_p, W_n and Count N_p, N_n.
     """
-    print([round(item, 6) for item in W_p[0]])
-    print([round(item, 6) for item in W_n[0]])
+    print([round(item, 4) for item in W_p])
+    print([round(item, 4) for item in W_n])
     print([int(item) for item in N_p])
     print([int(item) for item in N_n])
 
@@ -234,38 +244,31 @@ def data_partition(tv_ratio=0.1, ratio=0.002):
     total = len(ids)
     picked = int(total * ratio)
 
-    f_dict = rand_sample(f_dict, picked)
-    f_dict_full = copy.deepcopy(f_dict)
-    f_dict_val = rand_sample(f_dict, int(picked*tv_ratio))
-    dict_substract(f_dict, f_dict_val)
-    f_dict_train = f_dict
+    f_dict_p = rand_sample(f_dict, picked)
+    f_dict_full = copy.deepcopy(f_dict_p)
+    f_dict_val = rand_sample(f_dict_p, int(picked*tv_ratio))
+    dict_substract(f_dict_p, f_dict_val)
+    f_dict_train = f_dict_p
 
     df_val = pd.DataFrame()
-    for key in f_dict_val.keys():
-        df_val[key] = f_dict_val[key]
-
+    df_val = df_val.from_dict(f_dict_val)
     df_val.to_csv('../Data/val.csv', index=False)
 
     df_train = pd.DataFrame()
-    for key in f_dict_train.keys():
-        df_train[key] = f_dict_train[key]
-
+    df_train = df_train.from_dict(f_dict_train)
     df_train.to_csv('../Data/tra.csv', index=False)
 
     df_full = pd.DataFrame()
-    for key in f_dict_full.keys():
-        df_full[key] = f_dict_full[key]
-
+    df_full = df_full.from_dict(f_dict_full)
     df_full.to_csv('../Data/full.csv', index=False)
 
-    # return len(f_dict_train.keys()), len(f_dict_val.keys()), len(f_dict_full.keys())
     return f_dict_train, f_dict_val, f_dict_full
 
 
-def load_data():
-    f_dict_train = pd.read_csv('../Data/tra.csv')
-    f_dict_val = pd.read_csv('../Data/val.csv')
-    f_dict_full = pd.read_csv('../Data/full.csv')
+def load_data(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full.csv'):
+    f_dict_train = pd.read_csv(train)
+    f_dict_val = pd.read_csv(val)
+    f_dict_full = pd.read_csv(full)
 
     return f_dict_train, f_dict_val, f_dict_full
 
@@ -280,6 +283,7 @@ def train_data_generator(f_dict, folder):
 def eval_data_generator(f_dict, folder):
     while True:
         for key in f_dict.keys():
+            # yield fetch_data_x(key, folder, NORM_AVG_GL, NORM_STD_GL)
             yield fetch_data_x(key, folder, NORM_AVG_GL, NORM_STD_GL), fetch_data_y(f_dict, key)
 
 
@@ -288,30 +292,62 @@ def pred_data_generator(test_flst, folder):
         yield fetch_data_x(key, folder, NORM_AVG_TEST, NORM_STD_TEST)
 
 
-def convert_y(y_):
+def convert_y(y_, decode=True):
     temp = []
-    for i, item in enumerate(y_):
-        if item > 0.5:
-            temp.append(i)
+    if decode:
+        for i, item in enumerate(y_):
+            if item > 0.5:
+                temp.append(i)
+    else:
+        for i, item in enumerate(y_):
+            if item > 0.5:
+                temp.append(1)
+            else:
+                temp.append(0)
 
-    predict = convert_res_str(temp)
-
-    return predict
+    return temp
 
 
-def save_to_file(fnames, predictions):
-    resfile = open("./performance/result.csv", "w", newline="")
-    res_writer = csv.writer(resfile)
-    res_writer.writerow(["Id", "Predicted"])
-    ans = dict()
-    for fname, pred in zip(fnames, predictions):
-        ans[fname] = convert_y(pred)
+def save_to_file(fnames, predictions, decode=True, ckpt=None):
 
-    for key in sorted(ans.keys()):
-        res_writer.writerow([key, ans[key]])
+    resfile = 'result_' + ckpt + '.csv' if ckpt else 'result.csv'
+    filepath = "./performance/" + resfile
 
-    resfile.close()
+    if decode:
+        resfile = open(filepath, "w", newline="")
+        res_writer = csv.writer(resfile)
+        res_writer.writerow(["Id", "Predicted"])
+        ans = dict()
+        for fname, pred in zip(fnames, predictions):
+            temp = convert_y(pred, decode=decode)
+            ans[fname] = convert_res_str(temp)
+
+        for key in sorted(ans.keys()):
+            res_writer.writerow([key, ans[key]])
+
+        resfile.close()
+    else:
+        ans = dict()
+        for fname, pred in zip(fnames, predictions):
+            ans[fname] = convert_y(pred, decode=decode)
+
+        res = pd.DataFrame()
+        for key in sorted(ans.keys()):
+            res[key] = ans[key]
+
+        res.to_csv(filepath, index=False)
 
 
 def f1_score(rr, pr):
-    return 2*rr*pr/(rr+pr)
+    if rr == 0 and pr == 0:
+        return 0
+    else:
+        return 2*rr*pr/(rr+pr)
+
+
+def df_to_dict(df):
+    ans = dict()
+    for key in df.keys():
+        ans[key] = df[key].values
+
+    return ans
