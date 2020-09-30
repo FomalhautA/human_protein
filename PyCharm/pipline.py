@@ -48,7 +48,7 @@ def train_input_fn(data_getter, batch_size):
     dataset = dataset.repeat(count=None)
     dataset = dataset.prefetch(buffer_size=4)
 
-    return dataset.make_one_shot_iterator().get_next()
+    return tf.compat.v1.data.make_one_shot_iterator(dataset).get_next()
 
 
 def eval_input_fn(data_getter, batch_size):
@@ -75,43 +75,7 @@ def pred_input_fn(data_getter, batch_size):
     return dataset.make_one_shot_iterator().get_next()
 
 
-def model_fn(features, labels, mode, params):
-    conv_params = arch_stone()
-    logits = forward(features, conv_params, mode, fc1=1000, output=28)
-    predictions = tf.cast(tf.math.greater(tf.squeeze(logits), 0.5), tf.int32)
-
-    if mode == tf.estimator.ModeKeys.PREDICT:
-        return tf.estimator.EstimatorSpec(mode,
-                                          predictions=predictions)
-
-    else:
-        loss = calculate_loss(tf.squeeze(logits),
-                              tf.squeeze(labels),
-                              mode='Focal',
-                              weighted=True,
-                              Wp=params['Wp'],
-                              Wn=params['Wn'])
-
-        if mode == tf.estimator.ModeKeys.TRAIN:
-            optimizer = tf.train.RMSPropOptimizer(learning_rate=params['lr'])
-            train_op = optimizer.minimize(loss, global_step=tf.train.get_global_step(), var_list=tf.trainable_variables())
-
-            return tf.estimator.EstimatorSpec(mode,
-                                              loss=loss,
-                                              train_op=train_op)
-
-        elif mode == tf.estimator.ModeKeys.EVAL:
-            eval_metric_ops = {'recall': tf.metrics.recall(tf.squeeze(labels), predictions),
-                               'precision': tf.metrics.precision(tf.squeeze(labels), predictions),
-                               'accuracy': tf.metrics.accuracy(tf.squeeze(labels), predictions)}
-            return tf.estimator.EstimatorSpec(mode,
-                                              loss=loss,
-                                              eval_metric_ops=eval_metric_ops)
-        else:
-            raise Exception('Unsupported Mode Name {}'.format(mode))
-
-
-def main_procedure(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None):
+def keras_pipline(train='../Data/train.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None):
     f_dict_train = df_to_dict(pd.read_csv(train))
     f_dict_val = df_to_dict(pd.read_csv(val))
     f_dict_full = df_to_dict(pd.read_csv(full))
@@ -120,70 +84,53 @@ def main_procedure(train='../Data/tra.csv', val='../Data/val.csv', full='../Data
     scale_full = len(f_dict_full.keys())
     scale_train = len(f_dict_train.keys())
     scale_eval = len(f_dict_val.keys())
-    print("full: {}, train: {}, eval: {}".format(scale_full, scale_train, scale_eval))
+    print("samples count: {}, train: {}, val: {}".format(scale_full, scale_train, scale_eval))
 
-    epochs = 680
-    train_batch_size = 8
-    batch_cn_train = scale_train // train_batch_size + 1
-    train_step = epochs * batch_cn_train
-    eval_batch_size = 64
-    eval_step = scale_eval // eval_batch_size + 1
-    pred_batch_size = 64
+    epochs = 200
+    batch_size = 16
+    validation_split = 0.2
+    lr = 0.02
+    lr_decay = 0.98
+    decay_epoch = 5
+    steps_per_epoch = scale_train // batch_size
+    save_epochs = 20
+    decay_steps = decay_epoch * steps_per_epoch
 
-    train_data_gen = train_data_generator(f_dict=f_dict_train, folder='../Data/train_s')
-    eval_data_gen = eval_data_generator(f_dict=f_dict_val, folder='../Data/train_s')
-    pred_data_gen = pred_data_generator(test_fname, folder='../Data/test_s')
+    # batch_cn_train = scale_train // train_batch_size + 1
+    # train_step = epochs * batch_cn_train
+    # eval_batch_size = 64
+    # eval_step = scale_eval // eval_batch_size + 1
+    # pred_batch_size = 64
+
+    train_data_gen = train_data_generator(f_dict=f_dict_train, folder='../Data/train_s', batch_size=batch_size)
+    # eval_data_gen = eval_data_generator(f_dict=f_dict_val, folder='../Data/train_s')
+    # pred_data_gen = pred_data_generator(test_fname, folder='../Data/test_s')
 
     model_dir = './model'
 
-    params = {'lr': 0.02,
-              'Wp': WP.astype(np.float32),
+    params = {'Wp': WP.astype(np.float32),
               'Wn': WN.astype(np.float32)}
 
-    config = tf.estimator.RunConfig(model_dir=model_dir,
-                                    tf_random_seed=None,
-                                    save_summary_steps=1,
-                                    save_checkpoints_steps=10 * batch_cn_train,
-                                    keep_checkpoint_max=80,
-                                    log_step_count_steps=1)
+    conv_params = arch_stone()
 
-    model = tf.estimator.Estimator(model_fn=model_fn,
-                                   model_dir=model_dir,
-                                   config=config,
-                                   params=params,
-                                   warm_start_from=None)
+    model = create_model(conv_params, lr=lr, batch_size=batch_size, lr_decay=lr_decay, decay_steps=decay_steps)
 
-    train_spec = tf.estimator.TrainSpec(input_fn=lambda: train_input_fn(train_data_gen,
-                                                                        batch_size=train_batch_size),
-                                        max_steps=train_step)
-    eval_spec = tf.estimator.EvalSpec(input_fn=lambda: eval_input_fn(eval_data_gen,
-                                                                     batch_size=eval_batch_size),
-                                      steps=eval_step,
-                                      name=None,
-                                      start_delay_secs=0,
-                                      throttle_secs=0)
+    cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join(model_dir, 'model_{epoch}.h5'),
+                                                     save_weights_only=False, verbose=1, save_best_only=False,
+                                                     save_freq=save_epochs*steps_per_epoch)
 
-    x = tf.estimator.train_and_evaluate(model, train_spec, eval_spec)
-    print(x)
+    tb_callback = tf.keras.callbacks.TensorBoard(log_dir=os.path.join(model_dir, 'logs'), profile_batch=0,
+                                                 write_graph=True, write_images=False, embeddings_freq=0,
+                                                 histogram_freq=1, update_freq='epoch')
 
-    # model.train(input_fn=lambda: train_input_fn(train_data_gen, batch_size=train_batch_size),
-    #             steps=train_step)
-    #
-    # x = model.evaluate(input_fn=lambda: eval_input_fn(eval_data_gen,
-    #                                                   batch_size=eval_batch_size),
-    #                    steps=eval_step,
-    #                    checkpoint_path='./model/model.ckpt-87400')
-    #
-    # print(x)
+    model.fit(train_data_gen, epochs=epochs,
+              callbacks=[cp_callback, tb_callback], validation_data=None,
+              initial_epoch=0, steps_per_epoch=steps_per_epoch, validation_steps=None, validation_batch_size=None,
+              validation_freq=1, max_queue_size=10, workers=1, use_multiprocessing=False)
 
-    # checkpoint_path = './model/model.ckpt-' + ckpt if ckpt else None
-    #
-    # predictions = model.predict(input_fn=lambda: pred_input_fn(pred_data_gen,
-    #                                                            batch_size=pred_batch_size),
-    #                             checkpoint_path=checkpoint_path)
-    #
-    # save_to_file(test_fname, predictions, decode=True, ckpt=ckpt)
-    # save_to_file(f_dict_val.keys(), predictions, decode=False)
+    model.save(filepath=model_dir, overwrite=True, include_optimizer=True, save_format='tf',
+               signatures=None, options=None)
+    model.summary()
 
 
 if __name__ == '__main__':
@@ -191,4 +138,13 @@ if __name__ == '__main__':
     # norm_params(train='../Data/tra_aug.csv', val='../Data/val_aug.csv', full='../Data/full_aug.csv')
     # for ckpt in ['528770', '1009470', '1490170', '1970870', '2451570']:
     #     main_procedure(train='../Data/tra_aug.csv', val='../Data/val_aug.csv', full='../Data/full_aug.csv', ckpt=ckpt)
-    main_procedure(train='../Data/tra_aug.csv', val='../Data/val_aug.csv', full='../Data/full_aug.csv', ckpt=None)
+    keras_pipline(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None)
+
+    # image = get_image('000a6c98-bb9b-11e8-b2b9-ac1f6b6435d0-aug_13009', '../Data/train_s')
+    # print(image.shape)
+    # gen = train_data_generator(f_dict=f_dict_train, folder='../Data/train_s')
+    # X, Y = gen.__next__()
+    # X1, Y1 = gen.__next__()
+    # print(X.shape, Y.shape)
+    # print(X1.shape, Y1.shape)
+

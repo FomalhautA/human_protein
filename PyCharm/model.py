@@ -1,4 +1,7 @@
 import tensorflow as tf
+import tensorflow_addons as tfa
+
+from loss import focal_loss
 
 
 def inception_init(out1, r3, out3, r5, out5, outm):
@@ -35,95 +38,94 @@ def arch_stone():
     return conv_params
 
 
-def inception_v2(inputs, params, training=False):
-    out1 = params['out1']
-    r3 = params['r3']
-    out3 = params['out3']
-    r5 = params['r5']
-    out5 = params['out5']
-    outm = params['outm']
+def inception_v2(inputs, params):
+    """
 
-    z1 = tf.layers.conv2d(inputs=inputs, filters=out1, kernel_size=(1, 1), strides=(1, 1), padding='same',
-                          activation=None)
+    :param inputs:
+    :param params:
+    :return:
+    """
+    z1 = tf.keras.layers.Conv2D(filters=params['out1'], kernel_size=(1, 1), strides=(1, 1), padding='same',
+                                activation=None)(inputs)
 
-    z_r3 = tf.layers.conv2d(inputs=inputs, filters=r3, kernel_size=(1, 1), strides=(1, 1), padding='same',
-                            activation=None)
+    z_r3 = tf.keras.layers.Conv2D(filters=params['r3'], kernel_size=(1, 1), strides=(1, 1), padding='same',
+                                  activation=None)(inputs)
+    z3 = tf.keras.layers.Conv2D(filters=params['out3'], kernel_size=(3, 3), strides=(1, 1), padding='same',
+                                activation=None)(z_r3)
 
-    z3 = tf.layers.conv2d(inputs=z_r3, filters=out3, kernel_size=(3, 3), strides=(1, 1), padding='same',
-                          activation=None)
+    z_r5 = tf.keras.layers.Conv2D(filters=params['r5'], kernel_size=(1, 1), strides=(1, 1), padding='same',
+                                  activation=None)(inputs)
+    z5_1 = tf.keras.layers.Conv2D(filters=params['out5'], kernel_size=(3, 3), strides=(1, 1), padding='same',
+                                  activation=None)(z_r5)
+    z5 = tf.keras.layers.Conv2D(filters=params['out5'], kernel_size=(3, 3), strides=(1, 1), padding='same',
+                                activation=None)(z5_1)
 
-    z_r5 = tf.layers.conv2d(inputs=inputs, filters=r5, kernel_size=(1, 1), strides=(1, 1), padding='same',
-                            activation=None)
+    m = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=(1, 1), padding='same')(inputs)
+    zm = tf.keras.layers.Conv2D(filters=params['outm'], kernel_size=(1, 1), strides=(1, 1), padding='same',
+                                activation=None)(m)
 
-    z5_1 = tf.layers.conv2d(inputs=z_r5, filters=out5, kernel_size=(3, 3), strides=(1, 1), padding='same',
-                            activation=None)
+    z = tf.keras.layers.Concatenate(axis=-1)([z1, z3, z5, zm])
 
-    z5_2 = tf.layers.conv2d(inputs=z5_1, filters=out5, kernel_size=(3, 3), strides=(1, 1), padding='same',
-                            activation=None)
+    bn = tf.keras.layers.BatchNormalization(axis=-1)(z)
 
-    m = tf.layers.max_pooling2d(inputs=inputs, pool_size=(3, 3), strides=(1, 1), padding='same')
-
-    zm = tf.layers.conv2d(inputs=m, filters=outm, kernel_size=(1, 1), strides=(1, 1), padding='same',
-                          activation=None)
-
-    z = tf.concat(values=[z1, z3, z5_2, zm], axis=3)
-
-    bn = tf.layers.batch_normalization(z, axis=-1, training=training)
-
-    return tf.nn.leaky_relu(bn)
+    return tf.keras.layers.LeakyReLU()(bn)
 
 
-def forward(X, params, mode, fc1=1000, output=28):
-    # training = True if mode == tf.estimator.ModeKeys.TRAIN or mode == tf.estimator.ModeKeys.EVAL else False
-    training = True
+def create_model(params, output=28, lr=0.02, batch_size=8, lr_decay=0.999, decay_steps=6000):
+    """
+
+    :param params:
+    :param output:
+    :param lr:
+    :batch_size:
+    :return:
+    """
+    inputs = tf.keras.layers.Input(shape=(256, 256, 12), batch_size=batch_size, dtype=tf.dtypes.float32)
 
     # Layer 1
-    z1 = tf.layers.conv2d(inputs=X, filters=64, kernel_size=(7, 7), strides=(2, 2), padding='same',
-                          activation=None)
-    bn1 = tf.layers.batch_normalization(z1, axis=-1, training=training)
-    a1 = tf.nn.leaky_relu(bn1)
+    x = tf.keras.layers.Conv2D(filters=64, kernel_size=(7, 7), strides=(2, 2), padding='same', activation=None)(inputs)
+    x = tf.keras.layers.BatchNormalization(axis=-1)(x)
+    x = tf.keras.layers.LeakyReLU()(x)
 
-    m1 = tf.layers.max_pooling2d(inputs=a1, pool_size=(3, 3), strides=(2, 2), padding="same")
+    x = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=(2, 2), padding="same")(x)
 
     # Layer 2
-    z_2r = tf.layers.conv2d(inputs=m1, filters=64, kernel_size=(1, 1), strides=(1, 1), padding='valid',
-                            activation=tf.nn.leaky_relu)
+    x = tf.keras.layers.Conv2D(filters=64, kernel_size=(1, 1), strides=(1, 1), padding='valid', activation=tf.nn.leaky_relu)(x)
     # ToDo: Maybe need batch norm.
 
-    z2 = tf.layers.conv2d(inputs=z_2r, filters=192, kernel_size=(3, 3), strides=(1, 1), padding='same',
-                          activation=None)
-    bn2 = tf.layers.batch_normalization(z2, axis=-1, training=training)
-    a2 = tf.nn.leaky_relu(bn2)
+    x = tf.keras.layers.Conv2D(filters=192, kernel_size=(3, 3), strides=(1, 1), padding='same', activation=None)(x)
+    x = tf.keras.layers.BatchNormalization(axis=-1)(x)
+    x = tf.keras.layers.LeakyReLU()(x)
 
     # Max Pool
-    m2 = tf.layers.max_pooling2d(inputs=a2, pool_size=(3, 3), strides=(2, 2), padding="same")
+    x = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=(2, 2), padding="same")(x)
 
     # Layer 3a
-    a_3a = inception_v2(m2, params["c_L3a"], training=training)
+    x = inception_v2(x, params["c_L3a"])
     # layer 3b
-    a_3b = inception_v2(a_3a, params["c_L3b"], training=training)
+    x = inception_v2(x, params["c_L3b"])
 
     # Max Pool
-    m3 = tf.layers.max_pooling2d(inputs=a_3b, pool_size=(3, 3), strides=(2, 2), padding='same')
+    x = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=(2, 2), padding='same')(x)
 
     # Layer 4a
-    a_4a = inception_v2(m3, params["c_L4a"], training=training)
+    x = inception_v2(x, params["c_L4a"])
     # Layer 4b
-    a_4b = inception_v2(a_4a, params["c_L4b"], training=training)
+    x = inception_v2(x, params["c_L4b"])
     # Layer 4c
-    a_4c = inception_v2(a_4b, params["c_L4c"], training=training)
+    x = inception_v2(x, params["c_L4c"])
     # Layer 4d
-    a_4d = inception_v2(a_4c, params["c_L4d"], training=training)
+    x = inception_v2(x, params["c_L4d"])
     # Layer 4e
-    a_4e = inception_v2(a_4d, params["c_L4e"], training=training)
+    x = inception_v2(x, params["c_L4e"])
 
     # Max Pool
-    m4 = tf.layers.max_pooling2d(inputs=a_4e, pool_size=(3, 3), strides=(2, 2), padding='same')
+    x = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=(2, 2), padding='same')(x)
 
     # Layer 5a
-    a_5a = inception_v2(m4, params["c_L5a"], training=training)
+    x = inception_v2(x, params["c_L5a"])
     # Layer 5b
-    a_5b = inception_v2(a_5a, params["c_L5b"], training=training)
+    x = inception_v2(x, params["c_L5b"])
 
     # # Max Pool
     # m5 = tf.layers.max_pooling2d(inputs=a_5b, pool_size=(3, 3), strides=(2, 2), padding='same')
@@ -134,17 +136,29 @@ def forward(X, params, mode, fc1=1000, output=28):
     # a_6b = inception_v2(a_6a, params['c_L6b'], training=training)
 
     # Avg Pool
-    ap = tf.layers.average_pooling2d(inputs=a_5b, pool_size=(8, 8), strides=(1, 1), padding='valid')
+    x = tf.keras.layers.AvgPool2D(pool_size=(8, 8), strides=(1, 1), padding='valid')(x)
 
     # tf.keras.losses.CategoricalCrossentropy()
     # Full Connect
-    z_fc = tf.layers.dense(tf.reshape(tf.squeeze(ap), [-1, 1024]), units=output, activation=None)
-    bnfc = tf.layers.batch_normalization(z_fc, axis=-1, training=training)
-    a_out = tf.nn.sigmoid(bnfc, name="logits")
+    x = tf.keras.layers.Dense(units=1000, activation=None)(tf.reshape(tf.squeeze(x), [-1, 1024]))
+    x = tf.keras.layers.BatchNormalization(axis=-1)(x)
+    x = tf.keras.layers.Activation(tf.keras.activations.relu)(x)
 
-    #     # Full Connect
-    #     z_out = tf.contrib.layers.fully_connected(a_fc, num_outputs=output, activation_fn=None)
-    # #     bnout = batch_norm(z_out, params["c_Lout_scale"], params["c_Lout_beta"], epsilon)
-    #     a_out = tf.nn.sigmoid(z_out)
+    # Full Connect
+    x = tf.keras.layers.Dense(units=output, activation=None)(tf.reshape(tf.squeeze(x), [-1, 1000]))
+    x = tf.keras.layers.BatchNormalization(axis=-1)(x)
+    x = tf.keras.layers.Activation(tf.keras.activations.sigmoid)(x)
 
-    return a_out
+    model = tf.keras.Model(inputs, x)
+
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=lr, decay_steps=decay_steps,
+                                                                 decay_rate=lr_decay, staircase=True)
+
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=lr_schedule),
+                  loss=focal_loss,
+                  metrics=[tf.keras.metrics.BinaryAccuracy(),
+                           tfa.metrics.F1Score(num_classes=output, average='macro')],
+                  loss_weights=None, sample_weight_mode=None, weighted_metrics=None)
+
+    return model
+

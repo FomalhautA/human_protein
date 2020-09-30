@@ -9,6 +9,8 @@ import random
 from PIL import Image
 
 from pipline import ORIG_CHANNEL
+from threadsafe_iter import threadsafe_generator
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 # NORM_AVG_GL = [20.58, 13.46, 14., 21.12]
 # NORM_STD_GL = [35.06, 25.9, 39.23, 35.32]
@@ -101,7 +103,7 @@ def get_image(fname, folder, aug=True):
     temp = []
     for channel in COLORS:
         im = Image.open(os.path.join(folder, temp_name + '_' + channel + '.png'), 'r')
-        temp.append(np.array(im.convert('L')))
+        temp.extend(np.transpose(np.array(im.convert('RGB')), axes=(2, 0, 1)))
 
     return np.array(temp)
 
@@ -140,11 +142,11 @@ def pick_labels(f_dict, fname_lst):
 
 
 def fetch_data_x(fname, folder, norm_avg, norm_std):
-    return np.transpose(normalizer(get_image(fname, folder), norm_avg=norm_avg, norm_std=norm_std), (1, 2, 0))
+    return np.transpose(get_image(fname, folder)*1./255, (1, 2, 0))
 
 
 def fetch_data_y(dataframe, fname):
-    return np.array(dataframe[fname]).reshape((1, 1, 28))
+    return np.array(dataframe[fname])
 
 
 def get_weights(labels, scale=10, delta=1, threshold=0.004):
@@ -273,13 +275,22 @@ def load_data(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full
     return f_dict_train, f_dict_val, f_dict_full
 
 
-def train_data_generator(f_dict, folder):
+# @threadsafe_generator
+def train_data_generator(f_dict, folder, batch_size):
     while True:
+        idx = 0
         f_dict = rand_sample(f_dict, len(f_dict.keys()))
-        for key in f_dict.keys():
-                yield fetch_data_x(key, folder, NORM_AVG_GL, NORM_STD_GL), fetch_data_y(f_dict, key)
+        while idx + batch_size < len(f_dict.keys()):
+            X, Y = [], []
+            for key in list(f_dict.keys())[idx:idx+batch_size]:
+                X.append(fetch_data_x(key, folder, NORM_AVG_GL, NORM_STD_GL))
+                Y.append(fetch_data_y(f_dict, key))
+
+            idx += batch_size
+            yield np.array(X), np.array(Y)
 
 
+# @threadsafe_generator
 def eval_data_generator(f_dict, folder):
     while True:
         for key in f_dict.keys():
@@ -287,6 +298,7 @@ def eval_data_generator(f_dict, folder):
             yield fetch_data_x(key, folder, NORM_AVG_GL, NORM_STD_GL), fetch_data_y(f_dict, key)
 
 
+# @threadsafe_generator
 def pred_data_generator(test_flst, folder):
     for key in test_flst:
         yield fetch_data_x(key, folder, NORM_AVG_TEST, NORM_STD_TEST)
