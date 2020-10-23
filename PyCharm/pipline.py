@@ -1,6 +1,8 @@
 from util import *
 from model import *
 from loss import *
+from callbacks import EarlyStoppingCallback
+from resnext import create_model_resnext
 
 LR_DECAY = 0.9
 TV_RATIO = 0.1
@@ -75,11 +77,10 @@ def pred_input_fn(data_getter, batch_size):
     return dataset.make_one_shot_iterator().get_next()
 
 
-def keras_pipline(train='../Data/train.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None):
+def train_pipline(train='../Data/train.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None):
     f_dict_train = df_to_dict(pd.read_csv(train))
     f_dict_val = df_to_dict(pd.read_csv(val))
     f_dict_full = df_to_dict(pd.read_csv(full))
-    test_fname = load_test_fname('../Data/test_s')
 
     scale_full = len(f_dict_full.keys())
     scale_train = len(f_dict_train.keys())
@@ -89,31 +90,23 @@ def keras_pipline(train='../Data/train.csv', val='../Data/val.csv', full='../Dat
     epochs = 200
     batch_size = 16
     validation_split = 0.2
-    lr = 0.02
+    lr = 0.01
     lr_decay = 0.98
-    decay_epoch = 5
-    steps_per_epoch = scale_train // batch_size
+    decay_epoch = 1
+    steps_per_epoch = int(np.ceil(scale_full / batch_size))
     save_epochs = 20
     decay_steps = decay_epoch * steps_per_epoch
 
-    # batch_cn_train = scale_train // train_batch_size + 1
-    # train_step = epochs * batch_cn_train
-    # eval_batch_size = 64
-    # eval_step = scale_eval // eval_batch_size + 1
-    # pred_batch_size = 64
-
-    train_data_gen = train_data_generator(f_dict=f_dict_train, folder='../Data/train_s', batch_size=batch_size)
+    train_data_gen = train_data_generator(f_dict=f_dict_full, folder='../Data/train_s', batch_size=batch_size)
     # eval_data_gen = eval_data_generator(f_dict=f_dict_val, folder='../Data/train_s')
-    # pred_data_gen = pred_data_generator(test_fname, folder='../Data/test_s')
 
     model_dir = './model'
 
-    params = {'Wp': WP.astype(np.float32),
-              'Wn': WN.astype(np.float32)}
+    # conv_params = resnet_arch_stone()
+    # conv_params = inception_arch_stone()
 
-    conv_params = arch_stone()
-
-    model = create_model(conv_params, lr=lr, batch_size=batch_size, lr_decay=lr_decay, decay_steps=decay_steps)
+    model = create_model_resnext(lr=lr, batch_size=batch_size, lr_decay=lr_decay, decay_steps=decay_steps)
+    # model = create_model_inception(conv_params, lr=lr, batch_size=batch_size, lr_decay=lr_decay, decay_steps=decay_steps)
 
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join(model_dir, 'model_{epoch}.h5'),
                                                      save_weights_only=False, verbose=1, save_best_only=False,
@@ -123,28 +116,53 @@ def keras_pipline(train='../Data/train.csv', val='../Data/val.csv', full='../Dat
                                                  write_graph=True, write_images=False, embeddings_freq=0,
                                                  histogram_freq=1, update_freq='epoch')
 
+    # earlystop_callback = tf.keras.callbacks.EarlyStopping(monitor='binary_accuracy', min_delta=0.0001, patience=5,
+    #                                                       verbose=0, mode='max')
+
+    estop_callback = EarlyStoppingCallback()
+
     model.fit(train_data_gen, epochs=epochs,
-              callbacks=[cp_callback, tb_callback], validation_data=None,
+              callbacks=[cp_callback, tb_callback, estop_callback], validation_data=None,
               initial_epoch=0, steps_per_epoch=steps_per_epoch, validation_steps=None, validation_batch_size=None,
               validation_freq=1, max_queue_size=10, workers=1, use_multiprocessing=False)
 
     model.save(filepath=model_dir, overwrite=True, include_optimizer=True, save_format='tf',
                signatures=None, options=None)
+
     model.summary()
+
+
+def model_evaluation(model_file='./model/model_180.h5'):
+    batch_size = 128
+    test_fname = load_test_fname('../Data/test_s')
+    steps = np.ceil(len(test_fname) / batch_size)
+
+    pred_data_gen = pred_data_generator(test_fname, folder='../Data/test_s', batch_size=batch_size)
+    model = tf.keras.models.load_model(model_file,
+                                       custom_objects={'leaky_relu': tf.nn.leaky_relu,
+                                                       'focal_loss': focal_loss,
+                                                       'f1_loss': f1_loss})
+
+    # model.evaluate()
+    predictions = model.predict(pred_data_gen, verbose=1, steps=steps, max_queue_size=10, workers=1, use_multiprocessing=False)
+    ckpt = model_file.split('_')[1].split('.')[0]
+    save_to_file(test_fname, predictions, decode=True, ckpt=ckpt)
 
 
 if __name__ == '__main__':
     # data_partition(tv_ratio=0.2, ratio=1)
     # norm_params(train='../Data/tra_aug.csv', val='../Data/val_aug.csv', full='../Data/full_aug.csv')
-    # for ckpt in ['528770', '1009470', '1490170', '1970870', '2451570']:
-    #     main_procedure(train='../Data/tra_aug.csv', val='../Data/val_aug.csv', full='../Data/full_aug.csv', ckpt=ckpt)
-    keras_pipline(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None)
+    train_pipline(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None)
+
+    for model_num in range(20, 220, 20):
+        model_evaluation(model_file='./model/model_{}.h5'.format(str(model_num)))
 
     # image = get_image('000a6c98-bb9b-11e8-b2b9-ac1f6b6435d0-aug_13009', '../Data/train_s')
     # print(image.shape)
-    # gen = train_data_generator(f_dict=f_dict_train, folder='../Data/train_s')
-    # X, Y = gen.__next__()
-    # X1, Y1 = gen.__next__()
-    # print(X.shape, Y.shape)
-    # print(X1.shape, Y1.shape)
+
+    # im = Image.open('../Data/train_s/000a6c98-bb9b-11e8-b2b9-ac1f6b6435d0-aug_13009_red.png')
+    # print(np.asarray(im.con vert('RGB')).shape)
+
+    # tf.keras.layers.GlobalMaxPool1D()
+    # tf.keras.applications.resnet50.ResNet50()
 

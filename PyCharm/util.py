@@ -103,7 +103,8 @@ def get_image(fname, folder, aug=True):
     temp = []
     for channel in COLORS:
         im = Image.open(os.path.join(folder, temp_name + '_' + channel + '.png'), 'r')
-        temp.extend(np.transpose(np.array(im.convert('RGB')), axes=(2, 0, 1)))
+        # temp.extend(np.transpose(np.array(im.convert('RGB')), axes=(2, 0, 1)))
+        temp.append(np.asarray(im))
 
     return np.array(temp)
 
@@ -142,7 +143,7 @@ def pick_labels(f_dict, fname_lst):
 
 
 def fetch_data_x(fname, folder, norm_avg, norm_std):
-    return np.transpose(get_image(fname, folder)*1./255, (1, 2, 0))
+    return np.transpose(get_image(fname, folder)/255., (1, 2, 0))
 
 
 def fetch_data_y(dataframe, fname):
@@ -279,10 +280,11 @@ def load_data(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full
 def train_data_generator(f_dict, folder, batch_size):
     while True:
         idx = 0
-        f_dict = rand_sample(f_dict, len(f_dict.keys()))
-        while idx + batch_size < len(f_dict.keys()):
+        total = len(f_dict.keys())
+        f_dict = rand_sample(f_dict, total)
+        while idx < total:
             X, Y = [], []
-            for key in list(f_dict.keys())[idx:idx+batch_size]:
+            for key in list(f_dict.keys())[idx:min(idx+batch_size, total)]:
                 X.append(fetch_data_x(key, folder, NORM_AVG_GL, NORM_STD_GL))
                 Y.append(fetch_data_y(f_dict, key))
 
@@ -299,9 +301,15 @@ def eval_data_generator(f_dict, folder):
 
 
 # @threadsafe_generator
-def pred_data_generator(test_flst, folder):
-    for key in test_flst:
-        yield fetch_data_x(key, folder, NORM_AVG_TEST, NORM_STD_TEST)
+def pred_data_generator(test_flst, folder, batch_size):
+    idx = 0
+    total = len(test_flst)
+    while idx < total:
+        X = []
+        for key in test_flst[idx:min(idx+batch_size, total)]:
+            X.append(fetch_data_x(key, folder, NORM_AVG_TEST, NORM_STD_TEST))
+        idx += batch_size
+        yield np.array(X)
 
 
 def convert_y(y_, decode=True):
@@ -363,3 +371,5 @@ def df_to_dict(df):
         ans[key] = df[key].values
 
     return ans
+
+
