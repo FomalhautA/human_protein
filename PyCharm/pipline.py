@@ -1,3 +1,6 @@
+import os
+import pandas as pd
+
 from util import *
 from model import *
 from loss import *
@@ -25,18 +28,20 @@ ORIG_CHANNEL = 4
 
 
 def norm_params(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full.csv'):
-    f_dict_train, f_dict_val, f_dict_full = load_data(train=train, val=val, full=full)
+    data_utils = DataUtils()
+
+    f_dict_train, f_dict_val, f_dict_full = data_utils.load_data(train=train, val=val, full=full)
     print("Full Set: ")
-    channel_norm_params(f_dict_full.keys(), '../Data/train_s')
+    data_utils.channel_norm_params(f_dict_full.keys(), '../Data/train_s')
     print("Train Set: ")
-    channel_norm_params(f_dict_train.keys(), '../Data/train_s')
+    data_utils.channel_norm_params(f_dict_train.keys(), '../Data/train_s')
     print("Validation Set: ")
-    channel_norm_params(f_dict_val.keys(), '../Data/train_s')
+    data_utils.channel_norm_params(f_dict_val.keys(), '../Data/train_s')
 
     test_f_lst = os.listdir('../Data/test_s')
     test_f_set = set([item.split("_")[0] for item in test_f_lst])
     test_flst = list(test_f_set)
-    channel_norm_params(test_flst, '../Data/test_s')
+    data_utils.channel_norm_params(test_flst, '../Data/test_s')
 
 
 def train_input_fn(data_getter, batch_size):
@@ -78,26 +83,28 @@ def pred_input_fn(data_getter, batch_size):
 
 
 def train_pipline(train='../Data/train.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None):
-    f_dict_train = df_to_dict(pd.read_csv(train))
-    f_dict_val = df_to_dict(pd.read_csv(val))
-    f_dict_full = df_to_dict(pd.read_csv(full))
+    data_utils = DataUtils()
+
+    f_dict_train = data_utils.df_to_dict(pd.read_csv(train))
+    f_dict_val = data_utils.df_to_dict(pd.read_csv(val))
+    f_dict_full = data_utils.df_to_dict(pd.read_csv(full))
 
     scale_full = len(f_dict_full.keys())
     scale_train = len(f_dict_train.keys())
     scale_eval = len(f_dict_val.keys())
     print("samples count: {}, train: {}, val: {}".format(scale_full, scale_train, scale_eval))
 
-    epochs = 200
+    epochs = 100
     batch_size = 16
     validation_split = 0.2
-    lr = 0.01
-    lr_decay = 0.98
-    decay_epoch = 1
+    lr = 0.1
+    lr_decay = 0.84
+    decay_epoch = 5
     steps_per_epoch = int(np.ceil(scale_full / batch_size))
-    save_epochs = 20
+    save_epochs = 5
     decay_steps = decay_epoch * steps_per_epoch
 
-    train_data_gen = train_data_generator(f_dict=f_dict_full, folder='../Data/train_s', batch_size=batch_size)
+    train_data_gen = data_utils.train_data_generator(f_dict=f_dict_full, folder='../Data/train_s', batch_size=batch_size)
     # eval_data_gen = eval_data_generator(f_dict=f_dict_val, folder='../Data/train_s')
 
     model_dir = './model'
@@ -105,8 +112,15 @@ def train_pipline(train='../Data/train.csv', val='../Data/val.csv', full='../Dat
     # conv_params = resnet_arch_stone()
     # conv_params = inception_arch_stone()
 
-    model = create_model_resnext(lr=lr, batch_size=batch_size, lr_decay=lr_decay, decay_steps=decay_steps)
-    # model = create_model_inception(conv_params, lr=lr, batch_size=batch_size, lr_decay=lr_decay, decay_steps=decay_steps)
+    if ckpt is not None:
+        model = tf.keras.models.load_model(os.path.join(model_dir, ckpt),
+                                           custom_objects={'leaky_relu': tf.nn.leaky_relu,
+                                                           'focal_loss': focal_loss,
+                                                           'f1_loss': f1_loss})
+    else:
+        model = create_model_resnext(lr=lr, batch_size=batch_size, lr_decay=lr_decay, decay_steps=decay_steps)
+        # model = create_model_inception(conv_params, lr=lr, batch_size=batch_size, lr_decay=lr_decay,
+        # decay_steps=decay_steps)
 
     cp_callback = tf.keras.callbacks.ModelCheckpoint(filepath=os.path.join(model_dir, 'model_{epoch}.h5'),
                                                      save_weights_only=False, verbose=1, save_best_only=False,
@@ -133,11 +147,15 @@ def train_pipline(train='../Data/train.csv', val='../Data/val.csv', full='../Dat
 
 
 def model_evaluation(model_file='./model/model_180.h5'):
-    batch_size = 128
-    test_fname = load_test_fname('../Data/test_s')
+    print('Model {} predict ...'.format(model_file.split('/')[-1]))
+
+    data_utils = DataUtils()
+
+    batch_size = 16
+    test_fname = data_utils.load_test_fname('../Data/test_s')
     steps = np.ceil(len(test_fname) / batch_size)
 
-    pred_data_gen = pred_data_generator(test_fname, folder='../Data/test_s', batch_size=batch_size)
+    pred_data_gen = data_utils.pred_data_generator(test_fname, folder='../Data/test_s', batch_size=batch_size)
     model = tf.keras.models.load_model(model_file,
                                        custom_objects={'leaky_relu': tf.nn.leaky_relu,
                                                        'focal_loss': focal_loss,
@@ -146,7 +164,7 @@ def model_evaluation(model_file='./model/model_180.h5'):
     # model.evaluate()
     predictions = model.predict(pred_data_gen, verbose=1, steps=steps, max_queue_size=10, workers=1, use_multiprocessing=False)
     ckpt = model_file.split('_')[1].split('.')[0]
-    save_to_file(test_fname, predictions, decode=True, ckpt=ckpt)
+    data_utils.save_to_file(test_fname, predictions, decode=True, ckpt=ckpt)
 
 
 if __name__ == '__main__':
@@ -159,7 +177,7 @@ if __name__ == '__main__':
 
     # image = get_image('000a6c98-bb9b-11e8-b2b9-ac1f6b6435d0-aug_13009', '../Data/train_s')
     # print(image.shape)
-
+0
     # im = Image.open('../Data/train_s/000a6c98-bb9b-11e8-b2b9-ac1f6b6435d0-aug_13009_red.png')
     # print(np.asarray(im.con vert('RGB')).shape)
 

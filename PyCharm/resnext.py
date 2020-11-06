@@ -8,7 +8,6 @@ def resnext_block(inputs, output_channels, cardinality=32):
     """
 
     :param inputs:
-    :param input_channels:
     :param output_channels:
     :param cardinality:
     :return:
@@ -24,11 +23,15 @@ def resnext_block(inputs, output_channels, cardinality=32):
         covs.append(temp)
 
     z1 = tf.add_n(covs)
-    bn = tf.keras.layers.BatchNormalization(axis=-1)(z1)
-    a1 = tf.keras.layers.LeakyReLU()(bn)
-    re = tf.add(inputs, a1)
+    bn1 = tf.keras.layers.BatchNormalization(axis=-1, center=False, scale=True)(z1)
+    a1 = tf.keras.layers.ReLU()(bn1)
 
-    return re
+    z0 = tf.keras.layers.Conv2D(filters=output_channels, kernel_size=(1, 1), strides=(1, 1),
+                                padding='same', activation=None)(inputs)
+    bn0 = tf.keras.layers.BatchNormalization(axis=-1, center=False, scale=True)(z0)
+    a0 = tf.keras.layers.ReLU()(bn0)
+
+    return tf.add(a0, a1)
 
 
 def create_model_resnext(output=28, lr=0.02, batch_size=8, lr_decay=0.999, decay_steps=6000):
@@ -45,10 +48,10 @@ def create_model_resnext(output=28, lr=0.02, batch_size=8, lr_decay=0.999, decay
 
     # Layer 1
     x = tf.keras.layers.Conv2D(filters=64, kernel_size=(7, 7), strides=(2, 2), padding='same', activation=None)(inputs)
-    x = tf.keras.layers.BatchNormalization(axis=-1)(x)
-    x = tf.keras.layers.LeakyReLU()(x)
-
     x = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=(2, 2), padding="same")(x)
+
+    x = tf.keras.layers.BatchNormalization(axis=-1, center=False, scale=True)(x)
+    x = tf.keras.layers.ReLU()(x)
 
     # Layer Conv2-1
     x = resnext_block(x, output_channels=256, cardinality=32)
@@ -58,7 +61,8 @@ def create_model_resnext(output=28, lr=0.02, batch_size=8, lr_decay=0.999, decay
     x = resnext_block(x, output_channels=256, cardinality=32)
 
     # Layer 2 to 3
-    x = tf.keras.layers.MaxPool2D(kernel_size=(3, 3), strides=(2, 2), padding='same')(x)
+    x = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=(2, 2), padding='same')(x)
+    x = tf.keras.layers.BatchNormalization(axis=-1, center=False, scale=True)(x)
 
     # Layer Conv3-1
     x = resnext_block(x, output_channels=512, cardinality=32)
@@ -70,7 +74,8 @@ def create_model_resnext(output=28, lr=0.02, batch_size=8, lr_decay=0.999, decay
     x = resnext_block(x, output_channels=512, cardinality=32)
 
     # Layer 3 to 4
-    x = tf.keras.layers.MaxPool2D(kernel_size=(3, 3), strides=(2, 2), padding='same')(x)
+    x = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=(2, 2), padding='same')(x)
+    x = tf.keras.layers.BatchNormalization(axis=-1, center=False, scale=True)(x)
 
     # Layer Conv4-1
     x = resnext_block(x, output_channels=1024, cardinality=32)
@@ -86,7 +91,8 @@ def create_model_resnext(output=28, lr=0.02, batch_size=8, lr_decay=0.999, decay
     x = resnext_block(x, output_channels=1024, cardinality=32)
 
     # # Layer 4 to 5
-    x = tf.keras.layers.MaxPool2D(kernel_size=(3, 3), strides=(2, 2), padding='same')(x)
+    x = tf.keras.layers.MaxPool2D(pool_size=(3, 3), strides=(2, 2), padding='same')(x)
+    x = tf.keras.layers.BatchNormalization(axis=-1, center=False, scale=True)(x)
 
     # Layer Conv5-1
     x = resnext_block(x, output_channels=2048, cardinality=32)
@@ -98,16 +104,16 @@ def create_model_resnext(output=28, lr=0.02, batch_size=8, lr_decay=0.999, decay
     # Avg Pool
     x = tf.keras.layers.AvgPool2D(pool_size=(8, 8), strides=(1, 1), padding='valid')(x)
 
-    # tf.keras.losses.CategoricalCrossentropy()
-    # Full Connect
-    x = tf.keras.layers.Dense(units=1000, activation=None)(tf.squeeze(x))
-    x = tf.keras.layers.BatchNormalization(axis=-1)(x)
-    x = tf.keras.layers.Activation(tf.keras.activations.relu)(x)
+    # # tf.keras.losses.CategoricalCrossentropy()
+    # # Full Connect
+    # x = tf.keras.layers.Dense(units=1000, activation=None)(tf.squeeze(x))
+    # x = tf.keras.layers.BatchNormalization(axis=-1)(x)
+    # x = tf.keras.layers.Activation(tf.keras.activations.relu)(x)
 
     # Full Connect
     x = tf.keras.layers.Dense(units=output, activation=None)(tf.squeeze(x))
-    x = tf.keras.layers.BatchNormalization(axis=-1)(x)
     x = tf.keras.layers.Activation(tf.keras.activations.sigmoid)(x)
+    x = tf.keras.layers.BatchNormalization(axis=-1, center=False, scale=True)(x)
 
     model = tf.keras.Model(inputs, x)
 
