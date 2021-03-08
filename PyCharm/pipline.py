@@ -151,7 +151,7 @@ def model_evaluation(model_file='./model/model_180.h5'):
 
     data_utils = DataUtils()
 
-    batch_size = 16
+    batch_size = 32
     test_fname = data_utils.load_test_fname('../Data/test_s')
     steps = np.ceil(len(test_fname) / batch_size)
 
@@ -170,14 +170,13 @@ def model_evaluation(model_file='./model/model_180.h5'):
 if __name__ == '__main__':
     # data_partition(tv_ratio=0.2, ratio=1)
     # norm_params(train='../Data/tra_aug.csv', val='../Data/val_aug.csv', full='../Data/full_aug.csv')
-    train_pipline(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None)
+    # train_pipline(train='../Data/tra.csv', val='../Data/val.csv', full='../Data/full.csv', ckpt=None)
 
     for model_num in range(20, 220, 20):
         model_evaluation(model_file='./model/model_{}.h5'.format(str(model_num)))
 
     # image = get_image('000a6c98-bb9b-11e8-b2b9-ac1f6b6435d0-aug_13009', '../Data/train_s')
     # print(image.shape)
-0
     # im = Image.open('../Data/train_s/000a6c98-bb9b-11e8-b2b9-ac1f6b6435d0-aug_13009_red.png')
     # print(np.asarray(im.con vert('RGB')).shape)
 
